@@ -212,10 +212,13 @@ class MNSClient(object):
         self.check_status(req_inter, resp_inter, resp)
         if resp.error_data == "":
             queue_attr = GetQueueAttrDecoder.decode(resp_inter.data, req_inter.get_req_id())
+            # Deprecated: active_messages即将下线，将在后续版本中移除，请关注官方文档更新
             resp.active_messages = int(queue_attr["ActiveMessages"])
             resp.create_time = int(queue_attr["CreateTime"])
+            # Deprecated: delay_messages即将下线，将在后续版本中移除，请关注官方文档更新
             resp.delay_messages = int(queue_attr["DelayMessages"])
             resp.delay_seconds = int(queue_attr["DelaySeconds"])
+            # Deprecated: inactive_messages即将下线，将在后续版本中移除，请关注官方文档更新
             resp.inactive_messages = int(queue_attr["InactiveMessages"])
             resp.last_modify_time = int(queue_attr["LastModifyTime"])
             resp.maximum_message_size = int(queue_attr["MaximumMessageSize"])
@@ -244,7 +247,7 @@ class MNSClient(object):
         resp.header = resp_inter.header
         self.check_status(req_inter, resp_inter, resp)
         if resp.error_data == "":
-            resp.message_id, resp.message_body_md5, resp.receipt_handle = SendMessageDecoder.decode(resp_inter.data, req_inter.get_req_id())
+            resp.message_id, resp.message_body_md5, resp.receipt_handle, resp.message_group_id = SendMessageDecoder.decode(resp_inter.data, req_inter.get_req_id())
             if self.logger:
                 self.logger.info("SendMessage RequestId:%s QueueName:%s Priority:%s DelaySeconds:%s MessageId:%s MessageBodyMD5:%s" % \
                     (resp.get_requestid(), req.queue_name, req.priority, \
@@ -575,7 +578,7 @@ class MNSClient(object):
         resp.header = resp_inter.header
         self.check_status(req_inter, resp_inter, resp)
         if resp.error_data == "":
-            resp.message_id, resp.message_body_md5 = PublishMessageDecoder.decode(resp_inter.data, req_inter.get_req_id())
+            resp.message_id, resp.message_body_md5, resp.message_group_id = PublishMessageDecoder.decode(resp_inter.data, req_inter.get_req_id())
             if self.logger:
                 self.logger.info("PublishMessage RequestId:%s TopicName:%s MessageId:%s MessageBodyMD5:%s" % \
                     (resp.get_requestid(), req.topic_name, resp.message_id, resp.message_body_md5))
@@ -795,6 +798,12 @@ class MNSClient(object):
         resp.next_visible_time = int(data["NextVisibleTime"])
         resp.receipt_handle = data["ReceiptHandle"]
         resp.priority = int(data["Priority"])
+        resp.message_group_id = data.get("MessageGroupId", "")
+        # 处理属性
+        if "UserProperties" in data:
+            resp.user_properties = data["UserProperties"]
+        if "SystemProperties" in data:
+            resp.system_properties = data["SystemProperties"]
 
     def make_peekresp(self, data, resp):
         resp.dequeue_count = int(data["DequeueCount"])
@@ -804,6 +813,11 @@ class MNSClient(object):
         resp.message_id = data["MessageId"]
         resp.message_body_md5 = data["MessageBodyMD5"]
         resp.priority = int(data["Priority"])
+        # 处理属性
+        if "UserProperties" in data:
+            resp.user_properties = data["UserProperties"]
+        if "SystemProperties" in data:
+            resp.system_properties = data["SystemProperties"]
 
     def process_host(self, host):
         if host.startswith("http://"):

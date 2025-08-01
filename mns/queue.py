@@ -8,9 +8,11 @@
 #THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import time
-from .mns_client import MNSClient
+from deprecated import deprecated
 from .mns_request import *
 from .mns_exception import *
+from .mns_client import MNSClient
+from .message_property import MessagePropertyValue, PropertyType, MessageSystemPropertyValue, SystemPropertyName
 
 class Queue:
     def __init__(self, queue_name, mns_client, debug=False):
@@ -129,7 +131,11 @@ class Queue:
             :: MNSClientNetworkException    网络异常
             :: MNSServerException           mns处理异常
         """
-        req = SendMessageRequest(self.queue_name, message.message_body, message.delay_seconds, message.priority, self.encoding)
+        req = SendMessageRequest(self.queue_name, message.message_body, message.delay_seconds, message.priority, self.encoding, message.message_group_id)
+
+        req.user_properties = message.get_user_properties()
+        req.system_properties = message.get_system_properties()
+
         req.set_req_info(req_info)
         resp = SendMessageResponse()
         self.mns_client.send_message(req, resp)
@@ -156,7 +162,7 @@ class Queue:
         req = BatchSendMessageRequest(self.queue_name, self.encoding)
         req.set_req_info(req_info)
         for msg in messages:
-            req.add_message(msg.message_body, msg.delay_seconds, msg.priority)
+            req.add_message(msg.message_body, msg.delay_seconds, msg.priority, msg.message_group_id, msg.get_user_properties(), msg.get_system_properties())
         resp = BatchSendMessageResponse()
         self.mns_client.batch_send_message(req, resp)
         self.debuginfo(resp)
@@ -434,8 +440,11 @@ class Queue:
         queue_meta.polling_wait_seconds = resp.polling_wait_seconds
         queue_meta.logging_enabled = resp.logging_enabled
 
+        # Deprecated: active_messages即将下线，将在后续版本中移除，请关注官方文档更新
         queue_meta.active_messages = resp.active_messages
+        # Deprecated: inactive_messages即将下线，将在后续版本中移除，请关注官方文档更新
         queue_meta.inactive_messages = resp.inactive_messages
+        # Deprecated: delay_messages即将下线，将在后续版本中移除，请关注官方文档更新
         queue_meta.delay_messages = resp.delay_messages
         queue_meta.create_time = resp.create_time
         queue_meta.last_modify_time = resp.last_modify_time
@@ -454,6 +463,7 @@ class Queue:
             msg = Message()
             msg.message_id = entry.message_id
             msg.message_body_md5 = entry.message_body_md5
+            msg.message_group_id = entry.message_group_id
             msg_list.append(msg)
         return msg_list
 
@@ -466,6 +476,12 @@ class Queue:
         msg.first_dequeue_time = resp.first_dequeue_time
         msg.message_body = resp.message_body
         msg.priority = resp.priority
+
+        # 处理属性
+        if hasattr(resp, 'user_properties'):
+            msg.set_user_properties(resp.user_properties)
+        if hasattr(resp, 'system_properties'):
+            msg._set_system_properties(resp.system_properties)
         return msg
 
     def __batchpeek_resp2msg__(self, resp):
@@ -479,6 +495,11 @@ class Queue:
             msg.first_dequeue_time = entry.first_dequeue_time
             msg.message_body = entry.message_body
             msg.priority = entry.priority
+            # 处理属性
+            if hasattr(entry, 'user_properties'):
+                msg.set_user_properties(entry.user_properties)
+            if hasattr(entry, 'system_properties'):
+                msg._set_system_properties(entry.system_properties)
             msg_list.append(msg)
         return msg_list
 
@@ -486,6 +507,7 @@ class Queue:
         msg = self.__peek_resp2msg__(resp)
         msg.receipt_handle = resp.receipt_handle
         msg.next_visible_time = resp.next_visible_time
+        msg.message_group_id = resp.message_group_id
         return msg
 
     def __batchrecv_resp2msg__(self, resp):
@@ -501,6 +523,12 @@ class Queue:
             msg.priority = entry.priority
             msg.next_visible_time = entry.next_visible_time
             msg.receipt_handle = entry.receipt_handle
+            msg.message_group_id = entry.message_group_id
+            # 处理属性
+            if hasattr(entry, 'user_properties'):
+                msg.set_user_properties(entry.user_properties)
+            if hasattr(entry, 'system_properties'):
+                msg._set_system_properties(entry.system_properties)
             msg_list.append(msg)
         return msg_list
 
@@ -530,9 +558,6 @@ class QueueMeta:
             :: logging_enabled: 是否开启logging功能，如果开启MNS将该队列的日志推送到Account的logging bucket中
             
             @note: 非设置属性
-            :: active_messages: 可消费消息数，近似值
-            :: inactive_messages: 正在被消费的消息数，近似值
-            :: delay_messages: 延迟消息数，近似值
             :: create_time: queue创建时间，单位：秒 
             :: last_modify_time: 修改queue属性的最近时间，单位：秒
             :: queue_name: 队列名称
@@ -544,13 +569,43 @@ class QueueMeta:
         self.polling_wait_seconds = QueueMeta.DEFAULT_POLLING_WAIT_SECONDS if polling_wait_sec is None else polling_wait_sec
         self.logging_enabled = logging_enabled
 
-        self.active_messages = -1
-        self.inactive_messages = -1
-        self.delay_messages = -1
+        self._active_messages = -1
+        self._inactive_messages = -1
+        self._delay_messages = -1
         self.create_time = -1
         self.last_modify_time = -1
         self.queue_name = ""
+    
+    @property
+    @deprecated("active_messages即将下线，将在后续版本中移除，请关注官方文档更新")
+    def active_messages(self):
+        return self._active_messages
+    
+    @active_messages.setter
+    @deprecated("active_messages即将下线，将在后续版本中移除，请关注官方文档更新")
+    def active_messages(self, active_messages):
+        self._active_messages = active_messages
+    
+    @property
+    @deprecated("inactive_messages即将下线，将在后续版本中移除，请关注官方文档更新")
+    def inactive_messages(self):
+        return self._inactive_messages
+    
+    @inactive_messages.setter
+    @deprecated("inactive_messages即将下线，将在后续版本中移除，请关注官方文档更新")
+    def inactive_messages(self, inactive_messages):
+        self._inactive_messages = inactive_messages
 
+    @property
+    @deprecated("delay_messages即将下线，将在后续版本中移除，请关注官方文档更新")
+    def delay_messages(self):
+        return self._delay_messages
+    
+    @delay_messages.setter
+    @deprecated("delay_messages即将下线，将在后续版本中移除，请关注官方文档更新")
+    def delay_messages(self, delay_messages):
+        self._delay_messages = delay_messages
+    
     def set_visibilitytimeout(self, visibility_timeout):
         self.visibility_timeout = visibility_timeout
 
@@ -568,7 +623,7 @@ class QueueMeta:
 
     def set_logging_enabled(self, logging_enabled):
         self.logging_enabled = logging_enabled
-
+    
     def __str__(self):
         meta_info = {"VisibilityTimeout": self.visibility_timeout,
                      "MaximumMessageSize": self.maximum_message_size,
@@ -586,13 +641,16 @@ class QueueMeta:
 
 
 class Message:
-    def __init__(self, message_body = None, delay_seconds = None, priority = None):
+    def __init__(self, message_body = None, delay_seconds = None, priority = None, message_group_id = ""):
         """ 消息属性
 
             @note: send_message 指定属性
             :: message_body         消息体 
             :: delay_seconds        消息延迟时间
             :: priority             消息优先级
+            :: messageGroupId       消息组ID，FIFO队列使用
+            :: user_properties     用户自定义属性，Map<String, MessagePropertyValue>
+            :: system_properties   系统属性，Map<SystemPropertyName, MessageSystemPropertyValue>
 
             @note: send_message 返回属性
             :: message_id           消息编号
@@ -618,6 +676,10 @@ class Message:
         self.delay_seconds = -1 if delay_seconds is None else delay_seconds
         self.priority = -1 if priority is None else priority
 
+        # 用户自定义属性和系统属性
+        self.user_properties = {}  # Map<String, MessagePropertyValue>
+        self.system_properties = {}  # Map<String, MessageSystemPropertyValue>
+
         self.message_id = ""
         self.message_body_md5 = ""
 
@@ -627,10 +689,57 @@ class Message:
 
         self.receipt_handle = ""
         self.next_visible_time = 1
+        self.message_group_id = message_group_id
 
     def set_delayseconds(self, delay_seconds):
         self.delay_seconds = delay_seconds
 
     def set_priority(self, priority):
         self.priority = priority
+    
+    def set_user_properties(self, user_properties):
+        """设置用户自定义属性"""
+        if user_properties is not None:
+            self.user_properties = user_properties
+        else:
+            self.user_properties = {}
+    
+    def get_user_properties(self):
+        """获取用户自定义属性"""
+        return self.user_properties
+    
+    def add_user_property(self, name, property_value):
+        """添加单个用户自定义属性"""
+        if not isinstance(property_value, MessagePropertyValue):
+            raise ValueError("property_value must be instance of MessagePropertyValue")
+        self.user_properties[name] = property_value
+    
+    def get_system_properties(self):
+        """获取系统属性"""
+        return self.system_properties
+    
+    def add_system_property(self, name, property_value):
+        """
+        添加单个系统属性
+        @param name: 系统属性名称，必须是 SystemPropertyName 中的有效值
+        @param property_value: MessageSystemPropertyValue 实例
+        """
+        if not isinstance(property_value, MessageSystemPropertyValue):
+            raise ValueError("property_value must be instance of MessageSystemPropertyValue")
+        if not SystemPropertyName.is_valid(name):
+            raise ValueError("Invalid system property name: %s. Valid names are: %s" % (name, SystemPropertyName.values()))
+        self.system_properties[name] = property_value
 
+    def set_message_group_id(self, message_group_id):
+        """ 设置消息组ID，仅FIFO队列使用
+
+            @type message_group_id: string
+            @param message_group_id: 消息组ID
+        """
+        self.message_group_id = message_group_id
+    def _set_system_properties(self, system_properties):
+        """内部方法：设置系统属性，仅用于接收消息时的反序列化"""
+        if system_properties is not None:
+            self.system_properties = system_properties
+        else:
+            self.system_properties = {}

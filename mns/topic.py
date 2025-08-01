@@ -13,6 +13,7 @@ from .mns_client import MNSClient
 from .mns_request import *
 from .mns_exception import *
 from .subscription import *
+from .message_property import MessagePropertyValue, PropertyType, MessageSystemPropertyValue, SystemPropertyName
 try:
     import json
 except ImportError:
@@ -137,7 +138,12 @@ class Topic:
             :: MNSClientNetworkException    网络异常
             :: MNSServerException           mns处理异常
         """
-        req = PublishMessageRequest(self.topic_name, message.message_body, message.message_tag, message.direct_mail, message.direct_sms)
+        req = PublishMessageRequest(self.topic_name, message.message_body, message.message_tag, message.direct_mail, message.direct_sms, message.message_group_id)
+
+        # 将 TopicMessage 对象的属性附加到 req 对象上
+        req.user_properties = message.get_user_properties()
+        req.system_properties = message.get_system_properties()
+
         req.set_req_info(req_info)
         resp = PublishMessageResponse()
         self.mns_client.publish_message(req, resp)
@@ -223,7 +229,7 @@ class TopicMeta:
 
     def set_logging_enabled(self, logging_enabled):
         self.logging_enabled = logging_enabled
-
+    
     def __str__(self):
         meta_info = {"MaximumMessageSize": self.maximum_message_size,
                      "MessageRetentionPeriod": self.message_retention_period,
@@ -235,7 +241,7 @@ class TopicMeta:
         return "\n".join(["%s: %s" % (k.ljust(30),v) for k,v in meta_info.items()])
 
 class TopicMessage(object):
-    def __init__(self, message_body = u"", message_tag = u"", direct_mail = None, direct_sms = None):
+    def __init__(self, message_body = u"", message_tag = u"", direct_mail = None, direct_sms = None, message_group_id = u""):
         """ Specify information of TopicMessage
 
             @note: publish_message params
@@ -243,6 +249,9 @@ class TopicMessage(object):
             :: message_tag         string, used to filter message
             :: direct_mail         DirectMailInfo, the information of direct mail
             :: direct_sms          DirectSMSInfo, the information of direct sms
+            :: message_group_id    string, used to group messages in FIFO topic
+            :: user_properties     用户自定义属性，Map<String, MessagePropertyValue>
+            :: system_properties   系统属性，Map<String, MessageSystemPropertyValue>
 
             @note: publish_message response information
             :: message_id
@@ -257,8 +266,13 @@ class TopicMessage(object):
         self.direct_mail = direct_mail
         self.direct_sms = direct_sms
 
+        # 用户自定义属性和系统属性
+        self.user_properties = {}  # Map<String, MessagePropertyValue>
+        self.system_properties = {}  # Map<String, MessageSystemPropertyValue>
+
         self.message_id = u""
         self.message_body_md5 = u""
+        self.message_group_id = message_group_id
 
     def set_messagebody(self, message_body):
         self.message_body = message_body
@@ -268,9 +282,55 @@ class TopicMessage(object):
 
     def set_message_tag(self, message_tag):
         self.message_tag = message_tag
+    
+    def set_message_group_id(self, message_group_id):
+        """设置消息组ID
+        @type message_group_id: string  
+        @param message_group_id: 消息组ID，用于FIFO主题
+        """
+        self.message_group_id = message_group_id
+    def set_user_properties(self, user_properties):
+        """设置用户自定义属性"""
+        if user_properties is not None:
+            self.user_properties = user_properties
+        else:
+            self.user_properties = {}
+    
+    def get_user_properties(self):
+        """获取用户自定义属性"""
+        return self.user_properties
+    
+    def add_user_property(self, name, property_value):
+        """添加单个用户自定义属性"""
+        if not isinstance(property_value, MessagePropertyValue):
+            raise ValueError("property_value must be instance of MessagePropertyValue")
+        self.user_properties[name] = property_value
+    
+    def get_system_properties(self):
+        """获取系统属性"""
+        return self.system_properties
+    
+    def add_system_property(self, name, property_value):
+        """
+        添加单个系统属性
+        @param name: 系统属性名称，必须是 SystemPropertyName 中的有效值
+        @param property_value: MessageSystemPropertyValue 实例
+        """
+        if not isinstance(property_value, MessageSystemPropertyValue):
+            raise ValueError("property_value must be instance of MessageSystemPropertyValue")
+        if not SystemPropertyName.is_valid(name):
+            raise ValueError("Invalid system property name: %s. Valid names are: %s" % (name, SystemPropertyName.values()))
+        self.system_properties[name] = property_value
+    
+    def _set_system_properties(self, system_properties):
+        """设置系统属性"""
+        if system_properties is not None:
+            self.system_properties = system_properties
+        else:
+            self.system_properties = {}
 
 class Base64TopicMessage(TopicMessage):
-    def __init__(self, message_body = u"", message_tag = u"", direct_mail = None, direct_sms = None):
+    def __init__(self, message_body = u"", message_tag = u"", direct_mail = None, direct_sms = None, message_group_id = u""):
         """ Specify information of Base64TopicMessage
 
             @note: publish_message params
@@ -280,7 +340,7 @@ class Base64TopicMessage(TopicMessage):
             :: direct_sms          DirectSMSInfo, the information of direct sms
 
         """
-        super(Base64TopicMessage, self).__init__(message_body, message_tag, direct_mail, direct_sms)
+        super(Base64TopicMessage, self).__init__(message_body, message_tag, direct_mail, direct_sms, message_group_id)
 
         self.message_body = base64.b64encode(self.message_body.encode("utf-8")).decode("utf-8")
 
